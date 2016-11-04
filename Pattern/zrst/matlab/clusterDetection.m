@@ -2,9 +2,9 @@
 
 
 %path = '/home/troutman/Documents//proj2/cmu/wav_1channel/'
-path = '/home/troutman/Documents/proj2/MLDS_HW1_RELEASE_v1/wav/'
-dumpfile =  'test.txt'
-dumpfile = 'IDump_timit_dev_150_MLDS.txt'
+%path = '/tmp2/b02902077/nchlt_tso/audio/wav/'
+path = '/tmp2/b02902077/timit/train/wav/'
+dumpfile = 'IDump_timit_500.txt'
 wavPath = path
 
 iter=4;%4
@@ -12,7 +12,7 @@ powerorder=4;%4
 peakdelta=0.2;%0.2
 
 normalize = false;%false
-clusterNumber = 150%30
+clusterNumber = 500%30
 frameThresh = 5%10,5
 energyThresh = 0.2%0.3,0.2
 %get the all the wav file names
