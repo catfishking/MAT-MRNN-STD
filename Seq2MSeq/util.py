@@ -1,5 +1,6 @@
 import numpy as np
-
+import subprocess
+from subprocess import PIPE, Popen
 
 def label_id_builder(dic_path,label2id, id2label):
     count = 0
@@ -11,9 +12,7 @@ def label_id_builder(dic_path,label2id, id2label):
             count += 1
 
 def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
-
-    '''
-     convert MLF file into label sequence
+    '''Convert MLF file into label sequence
 
      # Arguments
          mlf_path: path to .mlf file
@@ -24,12 +23,10 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
     # Returns
         utt to label_sequence(onehot encoding) dictionary,
         label2id,
-        id2label
-        
+        id2label    
     '''         
 
     target_rate = 0.
-
     # read cfg file to check the target_rate
     with open(cfg_path,'r') as f:
         for line in f:
@@ -89,6 +86,45 @@ def to_onehot(y,nb_classes=None):
         Y[i, y[i]] = 1.
     return Y
 
+def get_mfcc_feat(wav_path,config_path):
+    '''Return mfcc feature based on config
+    # Arguments
+        wav_path: wav file path
+        config_path: htk config file path
+    # Returns
+        A matrix of MFCC features
+    '''
+
+    p = Popen(['HList','-C',config_path,wav_path],stdout=PIPE)
+
+    # read the MFCC features
+    p.stdout.readline() # skip first line
+    mfcc = np.array([])
+    f_mfcc = np.zeros(39)
+    count = 0
+    for line in p.stdout:
+        if ':' in line: # a new frame start
+            f_mfcc = np.zeros(39)
+            count = 0
+            line = line.split()[1:]
+            for feat in range(len(line)):
+                f_mfcc[count] = line[feat]
+                count += 1
+        elif 'END' in line: # end of MFCC feats
+            break
+        else:
+            line = line.split()
+            for feat in range(len(line)):
+                f_mfcc[count] = line[feat]
+                count += 1
+
+        if count == 39:
+            mfcc = np.append(mfcc,f_mfcc,axis=0)
+
+    p.wait() 
+
+    mfcc = mfcc.reshape(mfcc.size/39,39)
+    return mfcc
 
 
 def debug():
@@ -98,6 +134,12 @@ def debug():
     dic = target + 'library/dictionary.txt'
     MLFReader(mlf,cfg,dic)
 
+def debug2():
+    wav = '/tmp2/b02902077/timit/train/wav/dr8_mtcs0_sx82.wav'
+    config = '/tmp2/b02902077/STD/Pattern/zrst/matlab/hcopy.cfg'
+    mfcc = get_mfcc_feat(wav,config)
+    print mfcc
+
 
 if __name__ == "__main__" :
-    debug()
+    debug2()
