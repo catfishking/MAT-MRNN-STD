@@ -11,6 +11,25 @@ def label_id_builder(dic_path,label2id, id2label):
             id2label[count] = line[0]
             count += 1
 
+def to_onehot(y,nb_classes=None):
+    '''Convert class vector (integers from 0 to nb_classes) to binary class matrix, for use with categorical_crossentropy.
+
+    # Arguments
+        y:  class vector to be converted into a matrix
+        nb_classes: total number of classes
+
+    # Returns
+	A binary matrix representation of the input.
+    '''
+
+    if not nb_classes:
+        nb_classes = np.max(y)+1
+    Y = np.zeros((len(y), nb_classes))
+    for i in range(len(y)):
+        Y[i, y[i]] = 1.
+    return Y
+
+
 def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
     '''Convert MLF file into label sequence
 
@@ -53,7 +72,7 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
                 utt_label = []
 
             elif line[0] == '\"' and line[-2] == '\"': # if is a new utterance
-                utt = line[3:-4] # remove file extension
+                utt = line[3:-6] # remove file extension
 
             elif len(utt) > 0:
                 line = line.split()
@@ -66,26 +85,8 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
                 if frame_level:
                     for i in range(num_frame):
                         utt_label.append(label)
+    return label_seq, label2id, id2label
                 
-
-def to_onehot(y,nb_classes=None):
-    '''Convert class vector (integers from 0 to nb_classes) to binary class matrix, for use with categorical_crossentropy.
-
-    # Arguments
-        y:  class vector to be converted into a matrix
-        nb_classes: total number of classes
-
-    # Returns
-	A binary matrix representation of the input.
-    '''
-
-    if not nb_classes:
-        nb_classes = np.max(y)+1
-    Y = np.zeros((len(y), nb_classes))
-    for i in range(len(y)):
-        Y[i, y[i]] = 1.
-    return Y
-
 def get_mfcc_feat(wav_path,config_path):
     '''Return mfcc feature based on config
     # Arguments
