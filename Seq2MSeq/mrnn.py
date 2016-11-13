@@ -1,5 +1,6 @@
 import cPickle, gzip
 import numpy as np
+import random
 import theano
 import theano.tensor as T
 import seq2seq
@@ -16,6 +17,8 @@ import scipy.misc
 
 import util
 
+nb_epoch = 20
+batch_size = 10
 
 def main():
 
@@ -79,32 +82,55 @@ def ha():
         with open('mfcc_feats','w') as f:
             cPickle.dump(dump, f, protocol=cPickle.HIGHEST_PROTOCOL)
     print 'Loaded mfcc_feats!'
-        
-    # load y target
-    utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
     
-    # sort mfcc & y & paddling & truncate
-    X_train = np.zeros((len(utt2LabelSeq),fix_len,39))
-    Y_train = np.zeros((len(utt2LabelSeq),fix_len,len(label2id)))
 
-    n = 0
-    for f in wavfiles:
-        f = os.path.basename(f)[:-4]
-        if utt2LabelSeq[f].shape[0] > fix_len:
-            Y_train[n] = utt2LabelSeq[f][:fix_len]
-            X_train[n] = all_feats[n][:fix_len]
-        else:
-            Y_train[n] = np.lib.pad(utt2LabelSeq[f],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',constant_values=0.)
-            X_train[n] = np.lib.pad(all_feats[n],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',constant_values=0.)
-        n += 1
-    
-    # for loop to train each decoder
-    X_batch = X_train[:1]
-    Y_batch = Y_train[:1]
-    model = SimpleSeq2Seq(input_shape=(550,39), output_dim=len(label2id),output_length=550)
-    model.compile(loss='mse', optimizer = 'rmsprop')
-    model.fit(X_batch,Y_batch,nb_epoch=100)
-    model.save_weights('my_weights.h')
+    nb_batch = int(len(wavfiles)/batch_size)
+    batch_left = len(wavfiles) % batch_size
+    for epoch in range(nb_epoch):
+        print 'Epoch: {:3d}'.format(epoch)
+        # for each target
+
+        # load y target
+        utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
+        
+        ### train on batch 
+        index_shuf = range(len(wavfiles))
+        random.shuffle(index_shuf)
+        wavfiles_shuf  = [ wavfiles[i] for i in index_shuf ]
+        all_feats_shuf = [ all_feats[i] for i in index_shuf]
+        wavfiles = wavfiles_shuf
+        all_feats = all_feats_shuf
+        
+        for i in range(nb_batch):
+            if i == nb_batch-1:
+                cur_batch_size = batch_size+batch_left
+                X_train = np.zeros((batch_size + batch_left,fix_len,39))
+                Y_train = np.zeros((batch_size + batch_left , fix_len, len(label2id)))
+            else:
+                cur_batch_size = batch_size
+                X_train = np.zeros((batch_size,fix_len,39))
+                Y_train = np.zeros((batch_size,fix_len,len(label2id)))
+
+            ### paddling & truncate
+            n = i*batch_size
+            for b in range(cur_batch_size):
+                f = os.path.basename(wavfiles[n])[:-4]
+                if utt2LabelSeq[f].shape[0] > fix_len:
+                    Y_train[b] = utt2LabelSeq[f][:fix_len]
+                    X_train[b] = all_feats[n][:fix_len]
+                else:
+                    Y_train[b] = np.lib.pad(utt2LabelSeq[f],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',constant_values=0.)
+                    X_train[b] = np.lib.pad(all_feats[n],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',constant_values=0.)
+                n += 1
+            
+            # for loop to train each decoder
+            model = SimpleSeq2Seq(input_shape=(550,39), output_dim=len(label2id),output_length=550)
+            model.compile(loss='mse', optimizer = 'rmsprop')
+            print X_train.shape, Y_train.shape
+            history = model.train_on_batch(X_train,Y_train)
+            print history
+
+        model.save_weights('my_weights.h')
 
     # show the result?
 
