@@ -53,7 +53,7 @@ def load_mfcc_train(wavfiles,cfgpath):
             cPickle.dump(dump, f, protocol=cPickle.HIGHEST_PROTOCOL)
     print 'Loaded mfcc_feats!'
 
-    return mfcc_feats
+    return wavfiles,mfcc_feats
 
 def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id):
     batch_left = len(wavfiles) % batch_size
@@ -68,7 +68,6 @@ def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id):
 
     ### paddling & truncate
     n = i*batch_size
-    print n
     for b in range(cur_batch_size):
        f = os.path.basename(wavfiles[n])[:-4]
        if utt2LabelSeq[f].shape[0] > fix_len:
@@ -78,10 +77,6 @@ def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id):
            Y_train[b] = np.lib.pad(utt2LabelSeq[f],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',\
                    constant_values=0.)
            Y_train[b][:,label2id['sil']] = 1.
-           print Y_train[b].shape
-           print X_train[b].shape
-           print utt2LabelSeq[f].shape[0]
-           print mfcc_feats[n].shape[0]
            X_train[b] = np.lib.pad(mfcc_feats[n],((0,fix_len-utt2LabelSeq[f].shape[0]),(0,0)),'constant',constant_values=0.)
        n += 1
     return X_train, Y_train
@@ -119,12 +114,9 @@ def ha():
     wavfiles = [join(wavpath,f) for f in listdir(wavpath) if isfile(join(wavpath, f))]
 
     ### load mfcc feats
-    mfcc_feats = load_mfcc_train(wavfiles,cfgpath)
+    wavfiles,mfcc_feats = load_mfcc_train(wavfiles,cfgpath)
    
     utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
-    print mfcc_feats[0].shape
-    f = os.path.basename(wavfiles[0])[:-4]
-    print utt2LabelSeq[f].shape
 
     ### build model
     model = Seq2Seq(input_shape=(fix_len,39), output_dim=len(label2id),output_length=fix_len)
