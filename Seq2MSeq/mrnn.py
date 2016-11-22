@@ -24,6 +24,15 @@ batch_size = 30
 fix_len = 550
 
 def shuffle_mfcc_input(wavfiles,all_feats):
+    ''' Shuffle both wav file list and input mfcc sequences
+
+    # Arguments
+        wavfiles: wav file list
+        all_feats: input mfcc sequences of all the wav file
+
+    # Returns
+        Shuffled wavfiles & all_feats
+    '''
     index_shuf = range(len(wavfiles))
     random.shuffle(index_shuf)
     wavfiles_shuf  = [ wavfiles[i] for i in index_shuf ]
@@ -34,6 +43,15 @@ def shuffle_mfcc_input(wavfiles,all_feats):
     return wavfiles, all_feats
 
 def load_mfcc_train(wavfiles,cfgpath):
+    ''' Load all the mfcc feats of the wav files fromm wavfiles(list)
+    # Arguments
+        wavfiles: wav file list
+        cfgpath: cfg file path
+
+    # Returns
+        wavfiles: wav file list
+        mfcc_feats: mfcc features of each wav file in wavfiles
+    '''
     if isfile('mfcc_feats'):
         with open('mfcc_feats') as f:
             mfcc = cPickle.load(f)
