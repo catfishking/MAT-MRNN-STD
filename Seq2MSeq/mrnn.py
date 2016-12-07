@@ -5,7 +5,7 @@ import random
 import theano
 import theano.tensor as T
 import seq2seq
-from seq2seq.models import SimpleSeq2Seq, Seq2Seq
+from seq2seq.models import SimpleSeq2Seq, Seq2Seq, MySeq2Seq
 from keras.layers import Activation
 
 import os
@@ -19,9 +19,10 @@ import scipy.misc
 
 import util
 
-nb_epoch = 40
-batch_size = 30
-fix_len = 550
+nb_epoch = 400
+batch_size = 20
+fix_len = 400
+hid_dim = 200
 
 def shuffle_mfcc_input(wavfiles,all_feats):
     ''' Shuffle both wav file list and input mfcc sequences
@@ -80,9 +81,9 @@ def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id):
        X_train = np.zeros((batch_size + batch_left,fix_len,39))
        Y_train = np.zeros((batch_size + batch_left , fix_len, len(label2id)))
     else:
-       cur_batch_size = batch_size
-       X_train = np.zeros((batch_size,fix_len,39))
-       Y_train = np.zeros((batch_size,fix_len,len(label2id)))
+        cur_batch_size = batch_size
+        X_train = np.zeros((batch_size,fix_len,39))
+        Y_train = np.zeros((batch_size,fix_len,len(label2id)))
 
     ### paddling & truncate
     n = i*batch_size
@@ -99,6 +100,23 @@ def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id):
        n += 1
     return X_train, Y_train
 
+def build_sample_weight(y,label2id):
+    ''' Return sample weight
+    # Arguments:
+        y: numpy array; shape: (None,len,nb_target)
+        label2id: dict; map label(str) to id(int)
+    # Return:
+        sample_weight: numpy array; same shape as y
+    '''
+    sil = label2id['sil']
+    sp = label2id['sp']
+
+    y_id = y.argmax(axis=2)
+    sample_weight = np.ones(y_id.shape)
+    sample_weight[ y_id == sil ] = 0.
+    sample_weight[ y_id == sp ] = 0.
+
+    return sample_weight
 
 def mnist_test():
 
@@ -137,10 +155,10 @@ def ha():
     utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
 
     ### build model
-    model = Seq2Seq(input_shape=(fix_len,39), output_dim=len(label2id),output_length=fix_len)
+    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(label2id),output_length=fix_len,hidden_dim=hid_dim)
     #model.add(Activation('softmax'))
-    #model.compile(loss='categorical_crossentropy', optimizer = 'rmsprop')
-    model.compile(loss='mse', optimizer = 'rmsprop')
+    model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+    #model.compile(loss='mse', optimizer = 'rmsprop')
     print model.summary()
 
     nb_batch = int(len(wavfiles)/batch_size)
@@ -151,6 +169,7 @@ def ha():
         ### for each target
         ### load y target
         utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
+
         
         ### shuffle data
         wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
@@ -160,13 +179,16 @@ def ha():
         for i in range(nb_batch):
             #print '    batch: {:4d}'.format(i)
             X_train, Y_train = build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id)
+
+            ### build class weight(not train sil & sp)
+            sample_weight = build_sample_weight(Y_train,label2id)
            
             ### for loop to train each decoder
             #print X_train.shape, Y_train.shape
-            batch_loss += model.train_on_batch(X_train,Y_train)
+            batch_loss += model.train_on_batch(X_train,Y_train,sample_weight=sample_weight)
 
-        print 'Epoch {:3d} loss: {:.5f}  fininish in: {:.5f} sec'.format(epoch,batch_loss,time.time() - start_time)
-        model.save_weights('my_weights.h')
+        print 'Epoch {:3d} loss: {:.5f}  fininish in: {:.5f} sec'.format(epoch,batch_loss/nb_batch,time.time() - start_time)
+        model.save_weights('ce_adadelta_classw_hid200.h')
         del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
 
     # show the result?
