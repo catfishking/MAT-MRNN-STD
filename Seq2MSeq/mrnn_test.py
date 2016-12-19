@@ -8,6 +8,7 @@ import seq2seq
 from seq2seq.models import SimpleSeq2Seq, Seq2Seq, MySeq2Seq
 from keras import backend as K
 from keras.layers import Activation
+import scipy
 
 import os
 from os import listdir
@@ -22,7 +23,8 @@ import util
 
 nb_epoch = 1 # should be 1
 batch_size = 1
-fix_len = 550
+fix_len = 400
+hid_dim = 200
 TEST_LABEL_SEQ = False
 
 def shuffle_mfcc_input(wavfiles,all_feats):
@@ -136,18 +138,50 @@ def ha():
     ### load mfcc feats
     wavfiles,mfcc_feats = load_mfcc_train(wavfiles,cfgpath)
 
-    wavfiles = wavfiles[:2]
-    mfcc_feats = mfcc_feats[:2]
-   
+    
+    wavs_sa1 = []
+    mfccs_sa1 = []
+    wavs_sa2 = []
+    mfccs_sa2 = []
+    for i in range(len(wavfiles)):
+        if os.path.basename(wavfiles[i])[-7:] == 'sa1.wav':
+            wavs_sa1.append(wavfiles[i])
+            mfccs_sa1.append(mfcc_feats[i])
+        elif os.path.basename(wavfiles[i])[-7:] == 'sa2.wav':
+            wavs_sa2.append(wavfiles[i])
+            mfccs_sa2.append(mfcc_feats[i])
+    
+    u1 = random.randint(0,len(wavs_sa1)-1)
+    u2 = random.randint(0,len(wavs_sa2)-1)
+    wavfiles = [wavs_sa1[u1], wavs_sa2[u2]]
+    mfcc_feats = [mfccs_sa1[u1],mfccs_sa2[u2]]
+    print wavfiles
+    '''
+    wavs = []
+    mfccs = []
+    for i in range(len(wavfiles)):
+        if os.path.basename(wavfiles[i]) == 'dr3_mrbc0_sa1.wav':
+            wavs.append(wavfiles[i])
+            mfccs.append(mfcc_feats[i])
+        elif os.path.basename(wavfiles[i]) == 'dr3_mrbc0_sa2.wav':
+            wavs.append(wavfiles[i])
+            mfccs.append(mfcc_feats[i])
+    
+    wavfiles = wavs
+    mfcc_feats = mfccs
+    print wavfiles
+    '''
+
+
     utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath)
 
     ### build model
-    model = Seq2Seq(input_shape=(fix_len,39), output_dim=len(label2id),output_length=fix_len)
+    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(label2id),output_length=fix_len)
     #model.add(Activation('softmax'))
     model.compile(loss='categorical_crossentropy', optimizer = 'rmsprop')
     #model.compile(loss='mse', optimizer = 'rmsprop')
     model.load_weights('my_weights_ce_adadelta_test.h')
-    print model.summary()
+    #print model.summary()
 
     if not TEST_LABEL_SEQ:
         # with a Sequential model
@@ -166,6 +200,7 @@ def ha():
         #wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
 
         ### train on batch
+        preds = []
         batch_loss = 0.
         for i in range(nb_batch):
             #print '    batch: {:4d}'.format(i)
@@ -179,18 +214,20 @@ def ha():
             #pred = np.exp(pred)
             #pred /= pred.sum(axis=1)
             #print pred
-            #print pred[0].argmax(axis=1)
+                print pred[0].argmax(axis=1)
             #for i in pred[0].argmax(axis=1):
             #    print '{} '.format(id2label[i])
             else:
-                pred = get_mid_layer_output([X_train]) [0]
-            print pred
+                preds.append(get_mid_layer_output([X_train]) [0])
+        if not TEST_LABEL_SEQ:
+            print 1 - scipy.spatial.distance.cosine(preds[0],preds[1])
 
 
         print 'Epoch {:3d} loss: {:.5f}  fininish in: {:.5f} sec'.format(epoch,batch_loss,time.time() - start_time)
         del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
 
     # show the result?
+
 
 
 if __name__ == "__main__":
