@@ -2,14 +2,21 @@ import numpy as np
 import subprocess
 from subprocess import PIPE, Popen
 
-def label_id_builder(dic_path,label2id, id2label):
+def label_id_builder(dic_path,label2id, id2label,phone_level):
     count = 0
     with open(dic_path,'r') as f:
         for line in f:
             line = line.split()
+            if phone_level:
+                if line[0] == 'sp' or line[0] == 'sil':
+                    continue
             label2id[ line[0] ] = count
             id2label[count] = line[0]
             count += 1
+    if phone_level:
+        label2id['<s>'] = count
+        label2id['</s>'] = count
+        id2label[count] = '<s>'
 
 def to_onehot(y,nb_classes=None):
     '''Convert class vector (integers from 0 to nb_classes) to binary class matrix, for use with categorical_crossentropy.
@@ -30,7 +37,7 @@ def to_onehot(y,nb_classes=None):
     return Y
 
 
-def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
+def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True,phone_level=False):
     '''Convert MLF file into label sequence
 
      # Arguments
@@ -38,6 +45,7 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
          cfg_path: path to .cfg file
          dic_path: path to dictionary
          frame_level: return label sequences of each frame or not
+         phone_level: target is phone-level or not
 
     # Returns
         utt to label_sequence(onehot encoding) dictionary,
@@ -58,7 +66,7 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
     id2label = {}
 
     # build label2id
-    label_id_builder(dic_path,label2id,id2label)
+    label_id_builder(dic_path,label2id,id2label,phone_level)
 
     utt = ''
     utt_label = []
@@ -67,7 +75,7 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
     with open(mlf_path) as f:
         for line in f:
             if line[0] == '.': # if is end of an utterance
-                label_seq[utt] = to_onehot(utt_label,nb_classes=len(label2id))
+                label_seq[utt] = to_onehot(utt_label,nb_classes=len(id2label))
                 utt = ''
                 utt_label = []
 
@@ -79,7 +87,6 @@ def MLFReader(mlf_path,cfg_path,dic_path,frame_level=True):
                 start = float(line[0])
                 end = float(line[1])
                 num_frame = int((end - start)/target_rate)
-
                 label = label2id[ line[2] ]
 
                 if frame_level:
