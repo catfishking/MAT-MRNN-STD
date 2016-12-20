@@ -27,7 +27,8 @@ fix_len = 50
 bucket_size = 50
 hid_dim = 100
 phone_level = True
-weight_name = 'ce_adadelta_classw_hid100_phone_bucket.h'
+targets = ['timit_c50_s5_g1_phone','timit_c50_s3_g1_phone']
+weight_name = 'ce_adadelta_classw_hid100_phone_bucket50_TEST.h'
 
 def shuffle_mfcc_input(wavfiles,all_feats):
     ''' Shuffle both wav file list and input mfcc sequences
@@ -120,7 +121,7 @@ def build_batch(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id,id2label,ph
         n += 1
     return X_train, Y_train
 
-# TODO this is an ugly version
+# TODO this is the vanilla version
 def build_batch_bucket(i,nb_batch,wavfiles,mfcc_feats,utt2LabelSeq,label2id,id2label,bucket_size=50,phone_level=False):
     ''' Build a batch based on bucket size
     # Arguments:
@@ -191,6 +192,30 @@ def build_sample_weight(y,label2id,phone_level=False):
 
     return sample_weight
 
+def seq2seq_load_weights(model, encoder_weights, decoder_weights):
+    ''' Load weights of the seq2seq model
+    # Arguments:
+        model: seq2seq model
+        encoder_weights: list; weights of model layer 0,1,2
+        decoder_weights: list; weights of model layer -2,-1
+    '''
+    for i in range(3):
+        model.layers[i].set_weights(encoder_weights[i])
+    for i,j in zip(range(-2,0),range(2)):
+        model.layers[i].set_weights(decoder_weights[j])
+
+def seq2seq_save_weights(model, encoder_weights, decoder_weights):
+    ''' Save weights of the seq2seq model
+    # Arguments:
+        model: seq2seq model
+        encoder_weights: list; weights of model layer 0,1,2
+        decoder_weights: list; weights of model layer -2,-1
+    '''
+    for i in range(3):
+        encoder_weights[i] = model.layers[i].get_weights()
+    for i,j in zip(range(-2,0),range(2)):
+        decoder_weights[j] = model.layers[i].get_weights()
+
 def mnist_test():
 
     # Load the dataset
@@ -214,8 +239,9 @@ def mnist_test():
     
 def ha():
     ### load mfcc input
-    dicpath = '/home/troutman/lab/STD/Pattern/Result/timit_c50_s5_g1_phone/library/dictionary.txt'
-    mlfpath =  '/home/troutman/lab/STD/Pattern/Result/timit_c50_s5_g1_phone/result/result.mlf'
+    target_prefix = '/home/troutman/lab/STD/Pattern/Result/'
+    dic_suffix = 'library/dictionary.txt'
+    mlf_suffix =  'result/result.mlf'
     wavpath  = '/home/troutman/lab/timit/train/wav/'
     cfgpath  = '/home/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
     weight_dir = 'model_weights'
@@ -234,38 +260,63 @@ def ha():
     ### load mfcc feats
     wavfiles,mfcc_feats = load_mfcc_train(wavfiles,cfgpath)
    
-    utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,phone_level = phone_level)
+    #utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,phone_level = phone_level)
 
-    ### build model
-    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(id2label),output_length=fix_len,hidden_dim=hid_dim)
-    #model.add(Activation('softmax'))
-    model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
-    #model.compile(loss='mse', optimizer = 'rmsprop')
-    print model.summary()
+    encoder_weights = []
+    decoder_weights = [] # store layer[-2], layer[-1] weights for each target decoder
+    ### get init weights
+    for t in targets:
+        print t
+        mlfpath = join(join(target_prefix,t), mlf_suffix)
+        dicpath = join(join(target_prefix,t), dic_suffix)
+        utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,phone_level = phone_level)
+        ### build model
+        model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(id2label),output_length=fix_len,hidden_dim=hid_dim)
+        #model.add(Activation('softmax'))
+        model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+        #model.compile(loss='mse', optimizer = 'rmsprop')
+        print model.summary()
+        decoder_weights.append( [model.layers[-2].get_weights(), model.layers[-1].get_weights()] )
+        encoder_weights = [model.layers[0].get_weights(), model.layers[1].get_weights(), model.layers[2].get_weights()]
+
 
     nb_batch = int(math.ceil(len(wavfiles)/float(batch_size)))
     for epoch in range(nb_epoch):
         #print 'Epoch: {:3d}'.format(epoch)
         start_time = time.time()
-
+        epoch_loss = 0.
         ### for each target
-        ### load y target
-        utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,\
-                phone_level = phone_level)
-        
-        ### shuffle data
-        wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
-        ### train on batch
-        batch_loss = 0.
-        for i in range(nb_batch):
-            #print '    batch: {:4d}'.format(i)
-            X_train, Y_train = build_batch_bucket(i,nb_batch,wavfiles,mfcc_feats,\
-                    utt2LabelSeq,label2id,id2label,phone_level=phone_level,bucket_size=bucket_size)
-            ### build class weight(not train sil & sp)
-            sample_weight = build_sample_weight(Y_train,label2id,phone_level=phone_level)
-            ### for loop to train each decoder
-            batch_loss += model.train_on_batch(X_train,Y_train,sample_weight=sample_weight)
-        print 'Epoch {:3d} loss: {:.5f}  fininish in: {:.5f} sec'.format(epoch,batch_loss/nb_batch,time.time() - start_time)
+        for t,n_t in zip(targets,range(len(targets))):
+            t_start_time = time.time()
+
+            mlfpath = join(join(target_prefix,t), mlf_suffix)
+            dicpath = join(join(target_prefix,t), dic_suffix)
+            ### load y target
+            utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath, phone_level = phone_level)
+            ### build model
+            model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(id2label),output_length=fix_len,hidden_dim=hid_dim)
+            model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+            ### load weights
+            seq2seq_load_weights(model, encoder_weights, decoder_weights[n_t])
+            
+            ### shuffle data
+            wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
+            ### train on batch
+            batch_loss = 0.
+            for i in range(nb_batch):
+                #print '    batch: {:4d}'.format(i)
+                X_train, Y_train = build_batch_bucket(i,nb_batch,wavfiles,mfcc_feats,\
+                        utt2LabelSeq,label2id,id2label,phone_level=phone_level,bucket_size=bucket_size)
+                ### build class weight(not train sil & sp)
+                sample_weight = build_sample_weight(Y_train,label2id,phone_level=phone_level)
+                ### for loop to train each decoder
+                batch_loss += model.train_on_batch(X_train,Y_train,sample_weight=sample_weight)
+            epoch_loss += batch_loss/nb_batch
+            seq2seq_save_weights(model, encoder_weights, decoder_weights[n_t])
+            print '  Epoch {:3d} target:[{}] loss: {:.5f}  fininish in: {:.5f} sec'.\
+                    format(epoch,t,batch_loss/nb_batch,time.time() - t_start_time)
+
+        print 'Epoch {:3d} loss: {:.5f}  fininish in: {:.5f} sec'.format(epoch,epoch_loss/len(targets),time.time() - start_time)
         model.save_weights(join(weight_dir,weight_name))
         del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
 
