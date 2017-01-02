@@ -1,7 +1,7 @@
 import numpy as np
 import subprocess
 from subprocess import PIPE, Popen
-
+import re
 def label_id_builder(dic_path,label2id, id2label,phone_level):
     count = 0
     with open(dic_path,'r') as f:
@@ -133,8 +133,43 @@ def get_mfcc_feat(wav_path,config_path):
 
     mfcc = mfcc.reshape(mfcc.size/39,39)
     return mfcc
+def get_word_mfcc(word_trans_path, mfcc, wav_fs=16000, mfcc_inv=10, use_pickle=False):
+    """
+    Arguments:
+        word_trans_path : path of word-level transcript
+        mfcc : mfcc vector
+        wac_fs : sample rate of wav file , default = 16000
+        mfcc_inv : mfcc interval , default = 10ms
+    
+    Return:
+        word_mfcc: list of word's mfcc in the utterance
+        word_list: list of words in the utterance
+    """
 
+    if use_pickle == True:
+        paths = re.split("/|_", word_trans_path)
+        print paths
+        word_path = "/home/troutman/lab/timit/train/%s/%s/%s.wrd" \
+                %(paths[-3], paths[-2], paths[-1][:-4])
+        #print "word_path = ", word_path
+        with open(word_path, "r") as f:
+             trans = f.readlines()
+    else: 
+        with open(word_trans_path, "r") as f:
+            trans = f.realines()
+    word_mfcc = []
+    word_list = []
+    for word in trans:
+        word = word.split()
+        start_point = int((float(word[0])/wav_fs) / (mfcc_inv*0.001))
+        end_point = int((float(word[1])/wav_fs) / (mfcc_inv*0.001))
+        #print "SE=", start_point, end_point
+        tmp_word_mfcc = mfcc[start_point:end_point]
 
+        word_mfcc.append(tmp_word_mfcc)
+        word_list.append(word[2])
+     
+    return word_mfcc, word_list
 def debug():
     target = '../Pattern/Result/timit_c50_g1_s5/'
     mlf = target + 'result/result.mlf'
