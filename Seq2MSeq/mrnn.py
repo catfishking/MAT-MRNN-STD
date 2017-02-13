@@ -213,28 +213,10 @@ def build_sample_weight(y,label2id,phone_level=True):
 
     return sample_weight
 
-def build_sample_weight_axis1(y,label2id,phone_level=True):
-    ''' Return sample weight
-    # Arguments:
-        y: numpy array; shape: (len,nb_target)
-        label2id: dict; map label(str) to id(int)
-    # Return:
-        sample_weight: numpy array; same shape as y
-    '''
-
-    y_id = y.argmax(axis=1)
-    sample_weight = np.ones(y_id.shape)
-    if phone_level:
-        sample_weight[ y_id == label2id['<s>']] = 0.01
-    else:
-        sample_weight[ y_id == label2id['sil'] ] = 0.01
-        sample_weight[ y_id == label2id['sp'] ] = 0.01
-
-    return sample_weight
-
-
 def Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,label2id,id2label,bucket_size,phone_level=True):
     while 1:
+        X = np.array([])
+        Y = np.array([])
         for n,wav in enumerate(wavfiles):
             wav = os.path.basename(wav)[:-4] # remove '.wav'
             for word in word_aligns[wav]:
@@ -251,11 +233,24 @@ def Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,label2id,id2label,b
                         y[word.length:,label2id['<s>']] = 1.
                     else:
                         y[word.length:,label2id['sil']] = 1.
-                    x = x[np.newaxis,:]
-                    y = y[np.newaxis,:]
-                    sample_weight = build_sample_weight(y,label2id,phone_level=phone_level)
-                    #print wav,word.vol,sample_weight
-                    yield x, y, sample_weight
+
+                    x = x[np.newaxis,:] # make the shape into [None,bucket_length, 39]
+                    y = y[np.newaxis,:] # make the shape into [None,bucket_length, nb_target]
+
+                    if X.size == 0: ### check empty
+                        X = x
+                        Y = y
+                    else:
+                        X = np.append(X,x,axis=0)
+                        Y = np.append(Y,y,axis=0)
+
+                    if X.shape[0] == 40:
+                        sample_weight = build_sample_weight(Y,label2id,phone_level=phone_level)
+                        X_train = X
+                        Y_train = Y
+                        X = np.array([])
+                        Y = np.array([])
+                        yield X_train, Y_train, sample_weight
 
 def seq2seq_load_weights(model, encoder_weights, decoder_weights):
     ''' Load weights of the seq2seq model
@@ -363,6 +358,7 @@ def ha():
 
             ### load y target
             utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath, phone_level = phone_level)
+            target_loss = 0.
 
             for bs in range(1,len(buckets)):
                 print 'bucket: {}'.format(buckets[bs])
@@ -373,7 +369,7 @@ def ha():
                 seq2seq_load_weights(model, encoder_weights, decoder_weights[n_t])
             
                 ### shuffle data
-                #wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
+                wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
                 ### train on batch
                 batch_loss = 0.
                 #for i in range(nb_batch):
@@ -387,10 +383,11 @@ def ha():
                 history = model.fit_generator(Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,\
                                             label2id,id2label,(buckets[bs-1],buckets[bs])),\
                                             samples_per_epoch=4000, nb_epoch=1)
-            #epoch_loss += history.history['loss']
+                target_loss += history.history['loss'][0]
+            epoch_loss += target_loss
             seq2seq_save_weights(model, encoder_weights, decoder_weights[n_t])
-            #print ('  Epoch {:3d} target:[{}] loss: {:.5f}  fininish in: {:.5f} sec'.\
-            #        format(epoch,t,batch_loss/nb_batch,time.time() - t_start_time))
+            print ('  Epoch {:3d} target:[{}] loss: {:.5f}  fininish in: {:.5f} sec'.\
+                    format(epoch,t,target_loss/(len(buckets)-1),time.time() - t_start_time))
 
         print ('Epoch {:3d}  fininish in: {:.5f} sec'.format(epoch,time.time() - start_time))
         model.save_weights(join(weight_dir,weight_name))
