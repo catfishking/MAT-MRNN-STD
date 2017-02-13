@@ -206,10 +206,10 @@ def build_sample_weight(y,label2id,phone_level=True):
     y_id = y.argmax(axis=2)
     sample_weight = np.ones(y_id.shape)
     if phone_level:
-        sample_weight[ y_id == label2id['<s>']] = 0.
+        sample_weight[ y_id == label2id['<s>']] = 0.01
     else:
-        sample_weight[ y_id == label2id['sil'] ] = 0.
-        sample_weight[ y_id == label2id['sp'] ] = 0.
+        sample_weight[ y_id == label2id['sil'] ] = 0.01
+        sample_weight[ y_id == label2id['sp'] ] = 0.01
 
     return sample_weight
 
@@ -225,10 +225,10 @@ def build_sample_weight_axis1(y,label2id,phone_level=True):
     y_id = y.argmax(axis=1)
     sample_weight = np.ones(y_id.shape)
     if phone_level:
-        sample_weight[ y_id == label2id['<s>']] = 0.
+        sample_weight[ y_id == label2id['<s>']] = 0.01
     else:
-        sample_weight[ y_id == label2id['sil'] ] = 0.
-        sample_weight[ y_id == label2id['sp'] ] = 0.
+        sample_weight[ y_id == label2id['sil'] ] = 0.01
+        sample_weight[ y_id == label2id['sp'] ] = 0.01
 
     return sample_weight
 
@@ -254,6 +254,7 @@ def Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,label2id,id2label,b
                     x = x[np.newaxis,:]
                     y = y[np.newaxis,:]
                     sample_weight = build_sample_weight(y,label2id,phone_level=phone_level)
+                    #print wav,word.vol,sample_weight
                     yield x, y, sample_weight
 
 def seq2seq_load_weights(model, encoder_weights, decoder_weights):
@@ -393,7 +394,7 @@ def ha():
 
         print ('Epoch {:3d}  fininish in: {:.5f} sec'.format(epoch,time.time() - start_time))
         model.save_weights(join(weight_dir,weight_name))
-        del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
+        #del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
 
     # show the result?
 
