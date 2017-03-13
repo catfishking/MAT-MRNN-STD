@@ -2,6 +2,7 @@ import numpy as np
 import subprocess
 from subprocess import PIPE, Popen
 import re
+
 def label_id_builder(dic_path,label2id, id2label,phone_level):
     count = 0
     with open(dic_path,'r') as f:
@@ -17,6 +18,9 @@ def label_id_builder(dic_path,label2id, id2label,phone_level):
         label2id['<s>'] = count
         label2id['</s>'] = count
         id2label[count] = '<s>'
+
+        label2id['pad'] = count+1
+        id2label[count+1] = 'pad'
 
 def to_onehot(y,nb_classes=None):
     '''Convert class vector (integers from 0 to nb_classes) to binary class matrix, for use with categorical_crossentropy.
@@ -133,6 +137,7 @@ def get_mfcc_feat(wav_path,config_path):
 
     mfcc = mfcc.reshape(mfcc.size/39,39)
     return mfcc
+
 def get_word_mfcc(word_trans_path, mfcc, wav_fs=16000, mfcc_inv=10, use_pickle=False):
     """
     Arguments:
@@ -149,14 +154,14 @@ def get_word_mfcc(word_trans_path, mfcc, wav_fs=16000, mfcc_inv=10, use_pickle=F
     if use_pickle == True:
         paths = re.split("/|_", word_trans_path)
         print paths
-        word_path = "/home/troutman/lab/timit/train/%s/%s/%s.wrd" \
+        word_path = "/data/home/troutman/lab/timit/train/%s/%s/%s.wrd" \
                 %(paths[-3], paths[-2], paths[-1][:-4])
         #print "word_path = ", word_path
         with open(word_path, "r") as f:
              trans = f.readlines()
     else: 
         with open(word_trans_path, "r") as f:
-            trans = f.realines()
+            trans = f.readlines()
     word_mfcc = []
     word_list = []
     for word in trans:
@@ -170,6 +175,51 @@ def get_word_mfcc(word_trans_path, mfcc, wav_fs=16000, mfcc_inv=10, use_pickle=F
         word_list.append(word[2])
      
     return word_mfcc, word_list
+
+def load_wrd_pos(wrd_path):
+    class Utt_pos():
+        def __init__(self,utt,wrd,start,end):
+            self.utt = utt
+            self.wrd = wrd
+            self.start = int(float(start)/16000. / 0.01)
+            self.end = int(float(end)/16000. /0.01)
+
+    wrd2utt_pos = {}
+    utt2wrd = {}
+
+    with open(wrd_path,'r') as f:
+        for line in f:
+            if '.wrd' in line:
+                utt = line[:-5]
+            elif line.strip(): # not empty string
+                line = line.split()
+                
+                start = line[0]
+                end = line[1]
+                wrd = line[2]
+                utt_pos = Utt_pos(utt,wrd,start,end)
+                wrd2utt_pos.setdefault(wrd,[]).append(utt_pos)
+                utt2wrd.setdefault(utt,[]).append(wrd)
+    return wrd2utt_pos, utt2wrd
+
+
+def debug3():
+    wrd_path = '../../timit/train/word_all.txt'
+    wrd2utt_pos = load_wrd_pos(wrd_path)
+    print len(wrd2utt_pos)
+    #print [(key,len(wrd2utt_pos[key])) for key in wrd2utt_pos]
+
+    wrd_path2 = '../../timit/test/word_all.txt'
+    wrd2utt_pos2 = load_wrd_pos(wrd_path2)
+    print len(wrd2utt_pos2)
+    #print [(key,len(wrd2utt_pos2[key])) for key in wrd2utt_pos2]
+    count = 0
+    for key in wrd2utt_pos2:
+        if key in wrd2utt_pos:
+            count += 1
+    print count
+
+
 def debug():
     target = '../Pattern/Result/timit_c50_g1_s5/'
     mlf = target + 'result/result.mlf'
@@ -178,10 +228,20 @@ def debug():
     MLFReader(mlf,cfg,dic)
 
 def debug2():
-    wav = '/tmp2/b02902077/timit/train/wav/dr8_mtcs0_sx82.wav'
-    config = '/tmp2/b02902077/STD/Pattern/zrst/matlab/hcopy.cfg'
-    mfcc = get_mfcc_feat(wav,config)
-    print mfcc
+    from dtw import dtw
+    from numpy.linalg import norm
+    wav = '/tmp3/troutman/lab/timit/train/wav/dr1_fcjf0_sa1.wav'
+    config = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    mfcc1 = get_mfcc_feat(wav,config)
+    w_mfcc1, w_list1 =get_word_mfcc('../../timit/train/dr1/fcjf0/sa1.wrd',mfcc1)
+
+    wav = '/tmp3/troutman/lab/timit/train/wav/dr1_fcjf0_sa1.wav'
+    config = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    mfcc2 = get_mfcc_feat(wav,config)
+    w_mfcc2, w_list2 =get_word_mfcc('../../timit/train/dr1/fcjf0/sa1.wrd',mfcc2)
+    dist = dtw(w_mfcc1[0],w_mfcc2[1],dist=lambda x, y: norm(x - y, ord=1) )
+    print w_mfcc1[0].shape, w_mfcc2[2].shape
+    print dist
 
 
 if __name__ == "__main__" :

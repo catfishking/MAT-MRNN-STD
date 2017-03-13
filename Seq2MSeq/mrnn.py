@@ -1,8 +1,10 @@
 import cPickle, gzip
 import numpy as np
+from numpy.linalg import norm
 import math
 import time
 import random
+from operator import itemgetter
 import sys
 import theano
 import theano.tensor as T
@@ -10,6 +12,7 @@ import seq2seq
 from seq2seq.models import SimpleSeq2Seq, Seq2Seq, MySeq2Seq
 from keras.layers import Activation
 from keras import backend as K
+from sklearn.metrics.pairwise import cosine_similarity
 
 import os
 from os import listdir
@@ -19,6 +22,7 @@ from os.path import isfile, join
 #import matplotlib.image as mpimg
 import scipy
 import scipy.misc
+from dtw import dtw
 
 
 import util
@@ -514,7 +518,7 @@ def ha_mfcc():
 
     ### build model
     model = Seq2Seq(input_shape=(fix_len,39), output_dim=39,output_length=fix_len,hidden_dim=hid_dim)
-    model.compile(loss='mse', optimizer = 'rmsprop',sample_weight_mode="temporal")
+    model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
     model.summary()
     encoder_weights = []
     decoder_weights = [] # store layer[-2], layer[-1] weights for each target decoder
@@ -534,7 +538,7 @@ def ha_mfcc():
             wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
 
             model = MySeq2Seq(input_shape=(buckets[bs],39), output_dim=39,output_length=buckets[bs],hidden_dim=hid_dim)
-            model.compile(loss='mse', optimizer = 'rmsprop',sample_weight_mode="temporal")
+            model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
             seq2seq_load_weights(model, encoder_weights, decoder_weights[0])
 
             history = model.fit_generator(Mygenerator_mfcc(wavfiles,mfcc_feats,word_aligns,(buckets[bs-1],buckets[bs])),\
@@ -618,8 +622,214 @@ def test():
         cPickle.dump(word_aligns, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
 
+def test_mfcc():
+    ### load mfcc input
+    target_prefix = '/data/home/troutman/lab/STD/Pattern/Result/'
+    dic_suffix = 'library/dictionary.txt'
+    mlf_suffix =  'result/result.mlf'
+    wavpath  = '/data/home/troutman/lab/timit/test/wav/'
+    cfgpath  = '/data/home/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    word_align_path = '/data/home/troutman/lab/timit/test/word_all.txt'
+    test_set = '/data/home/troutman/lab/timit/test/test_query.txt'
+    weight_dir = 'model_weights'
+
+    mfcc_feats = [] # shape:(nb_wavfiles,nb_frame,39)
+    wavfiles = [join(wavpath,f) for f in listdir(wavpath) if isfile(join(wavpath, f))]
+
+    ### load mfcc feats
+    wavfiles,mfcc_feats = load_mfcc_test(wavfiles,cfgpath)
+
+    ### load word_align
+    word_aligns = {}
+    load_word_align(word_align_path,word_aligns)
+
+    encoder_weights = []
+    decoder_weights = [] # store layer[-2], layer[-1] weights for each target decoder
+    ### get init weights
+    t = targets[-1]
+    print (t)
+    mlfpath = join(join(target_prefix,t), mlf_suffix)
+    dicpath = join(join(target_prefix,t), dic_suffix)
+    utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,phone_level = phone_level)
+
+    ### build model
+    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(id2label),output_length=fix_len,hidden_dim=hid_dim)
+    #model.add(Activation('softmax'))
+    model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+    #model.compile(loss='mse', optimizer = 'rmsprop')
+    model.load_weights(join(weight_dir,weight_name))
+    model.summary()
+    
+    get_mid_layer_output = K.function([model.layers[0].input], [model.layers[-2].input])
+    decoder_weights.append( [model.layers[-2].get_weights(), model.layers[-1].get_weights()] )
+    encoder_weights = [model.layers[0].get_weights(), model.layers[1].get_weights(), model.layers[2].get_weights()]
+
+    for n,wav in enumerate(wavfiles):
+        wav = os.path.basename(wav)[:-4] # remove '.wav'
+        for word in word_aligns[wav]:
+            print ('   processing {}'.format(word.vol))
+            if word.length > 150:
+                b_size = 150
+            else:
+                for length in buckets:
+                    if length > word.length:
+                        b_size = length
+                        break
+            ### build model
+            model = MySeq2Seq(input_shape=(b_size,39), output_dim=len(id2label),output_length=b_size,hidden_dim=hid_dim)
+            model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+            model.load_weights(join(weight_dir,weight_name))
+            get_mid_layer_output = K.function([model.layers[0].input], [model.layers[-2].input])
+
+            X = GetTestX(n,wavfiles,mfcc_feats,word,(b_size,b_size))
+            pred = get_mid_layer_output([X]) [0]
+            word.set_feat(pred)
+            #print scipy.spatial.distance.cosine(pred[0],pred[1])
+
+    with open('test_word_align.p','w') as f:
+        cPickle.dump(word_aligns, f, protocol=cPickle.HIGHEST_PROTOCOL)
+
+
+
+def test_dtw():
+    ### load mfcc input
+    wavpath  = '/tmp3/troutman/lab/timit/test/wav/'
+    cfgpath  = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    word_align_path = '/tmp3/troutman/lab/timit/test/word_all.txt'
+    test_set = '/tmp3/troutman/lab/timit/test/test_query.txt'
+    weight_dir = 'model_weights'
+    dump_file = 'test_word_align_dtw.p'
+
+    mfcc_feats = [] # shape:(nb_wavfiles,nb_frame,39)
+    wavfiles = [join(wavpath,f) for f in listdir(wavpath) if isfile(join(wavpath, f))]
+
+    ### load mfcc feats
+    wavfiles,mfcc_feats = load_mfcc_test(wavfiles,cfgpath)
+
+    ### load word_align
+    word_aligns = {}
+    load_word_align(word_align_path,word_aligns)
+
+    for n,wav in enumerate(wavfiles):
+        wav = os.path.basename(wav)[:-4] # remove '.wav'
+        for word in word_aligns[wav]:
+            word_mfcc = mfcc_feats[n][word.start:word.end]
+            if word_mfcc.shape[0] == 0:
+                word_mfcc = np.zeros(39)
+            word.set_feat(word_mfcc)
+
+    with open(dump_file,'w') as f:
+        cPickle.dump(word_aligns, f, protocol=cPickle.HIGHEST_PROTOCOL)
+
+
+def average_precision(w_q,words,cosine=True,atK=0.):
+    ''' compute the average_precision '''
+    
+    w_cost = []
+    num = -1. # exclude itself
+    for wav in words:
+        for w in words[wav]:
+            if not (w.wav == w_q.wav and w.start == w_q.start):
+                if cosine:
+                    pair = (w.vol,cosine_similarity(w.feat,w_q.feat))
+                else: # MFCC DTW 
+                    dist, cost, acc, path = dtw(w.feat,w_q.feat,dist=lambda x, y: norm(x - y, ord=1))
+                    pair = (w.vol, dist)
+                w_cost.append(pair)
+            if w.vol == w_q.vol:
+                num += 1
+
+    if num < atK:
+        return -1
+    # sort
+    if cosine:
+        w_cost = sorted(w_cost, key=itemgetter(1),reverse=True)
+    else:
+        w_cost = sorted(w_cost, key=itemgetter(1))
+
+    # compulte AP
+    hit = 0.
+    P = 0.
+    #print ' search:{}'.format(w_q.vol)
+    for (n,e) in enumerate(w_cost,1):
+        #print '  {}'.format(e[0])
+        if e[0] == w_q.vol:
+            hit += 1
+            P += hit/n
+        if atK > 0 and n>=atK: # P@K
+            break
+        elif hit >= num:
+            break;
+    print hit,num
+
+    if atK:
+        P = hit/atK
+        print 'P@{}'.format(atK)
+    else:
+        P /= num
+
+    print P
+    return P
+    
+
+def seq2mseq_map():
+    with open('test_word_align.p','r') as f:
+        words = cPickle.load(f)
+
+    ### load word_align
+    test_set = '/tmp3/troutman/lab/timit/test/test_query_P6.txt'
+    word_query = {}
+    load_word_align(test_set,word_query)
+
+    ### add feat
+    for wav in word_query:
+        for vol in word_query[wav]:
+            for v in words[wav]:
+                if v.start == vol.start:
+                    vol.set_feat(v.feat)
+    AP,n = 0., 0.
+    for wav in word_query:
+        for vol in word_query[wav]:
+            ap = average_precision(vol,word_query)
+            if ap >= 0:
+                AP += ap
+                n += 1
+                print "current MAP:{}".format(AP/n)
+    
+    MAP = AP / n
+    print "Our MAP:{}".format(MAP)
+
+
+def dtw_map():
+    with open('test_word_align_dtw.p','r') as f:
+        words = cPickle.load(f)
+    ### load word_align
+    test_set = '/tmp3/troutman/lab/timit/test/test_query_P6.txt'
+    word_query = {}
+    load_word_align(test_set,word_query)
+
+    ### add feat
+    for wav in word_query:
+        for vol in word_query[wav]:
+            for v in words[wav]:
+                if v.start == vol.start:
+                    vol.set_feat(v.feat)
+    AP,n = 0. , 0.
+    for wav in word_query:
+        for vol in word_query[wav]:
+            ap = average_precision(vol,word_query,cosine=False)
+            if ap >= 0:
+                AP += ap
+                n += 1
+                print "current MAP:{}".format(AP/n)
+    MAP = AP / n
+    print "DTW MAP:{}".format(MAP)
+
 
 if __name__ == "__main__":
-    ha_mfcc()
+    #ha_mfcc()
     #ha()
     #test()
+    #seq2mseq_map()
+    #test_dtw()
+    dtw_map()
