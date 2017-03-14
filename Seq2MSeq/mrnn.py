@@ -11,6 +11,7 @@ import theano.tensor as T
 import seq2seq
 from seq2seq.models import SimpleSeq2Seq, Seq2Seq, MySeq2Seq
 from keras.layers import Activation
+from keras.optimizers import SGD
 from keras import backend as K
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -27,7 +28,7 @@ from dtw import dtw
 
 import util
 
-nb_epoch = 1000
+nb_epoch = 800
 batch_size = 40
 fix_len = 50
 bucket_size = 50
@@ -35,12 +36,14 @@ hid_dim = 100
 phone_level = True
 targets = ['timit_c50_s5_g1_phone','timit_c50_s3_g1_phone','timit_c50_s7_g1_phone',\
         'timit_c100_s5_g1_phone','timit_c100_s3_g1_phone','timit_c100_s7_g1_phone',\
-        'timit_c300_s5_g1_phone','timit_c300_s3_g1_phone','timit_c300_s7_g1_phone']
+        'timit_c300_s5_g1_phone','timit_c300_s3_g1_phone','timit_c300_s7_g1_phone',\
+        'timit_c50_s5_g1_phone']
 #buckets = [0,5,10,15,20,25,30,35,40,50,60,70,90,100,150]
-buckets = [0,10,20,30,40,60,80]
+#buckets = [0,10,20,30,40,60,80]
+buckets = [20,30,40,60,80,40]
 #buckets_sample = [5166,8620,8049,7878,7378,2255]
-buckets_sample = [5160,8640,8040,7880,7360,2240]
-weight_name = 'ce_adadelta_classw_hid100_phone_bucket-test.h'
+#buckets_sample = [4000,8040,7880,7360,2240]
+weight_name = 'bucketv2.h'
 
 class WordAlign():
     def __init__(self,wavname,start,end,vol):
@@ -135,6 +138,23 @@ def load_mfcc_test(wavfiles,cfgpath):
     print ('Loaded mfcc_feats!')
 
     return wavfiles,mfcc_feats
+
+def mfcc_norm(mfcc_feats):
+    maximum = np.array([])
+    minimum = np.array([])
+    for feat in mfcc_feats:
+        if maximum.size == 0:
+            maximum = feat.max(axis=0)
+            minimum = feat.min(axis=0)
+        else:
+            maximum = np.append(feat.max(axis=0),maximum).reshape(2,39).max(axis=0)
+            minimum = np.append(feat.min(axis=0),minimum).reshape(2,39).min(axis=0)
+
+    print maximum
+    print minimum
+
+    for i in range(len(mfcc_feats)):
+        mfcc_feats[i] = (mfcc_feats[i]-minimum)/(maximum - minimum)
 
 def load_word_align(path, align_dict):
     ''' Load word_align info '''
@@ -258,6 +278,72 @@ def build_sample_weight(y,label2id,phone_level=True):
         sample_weight[ y_id == label2id['sp'] ] = 1e-8
 
     return sample_weight
+
+def Mygenerator2(wavfiles,mfcc_feats,utt2LabelSeq,label2id,id2label,bucket_size,batch_size=128):
+    X_train = np.array([])
+    Y_train = np.array([])
+    while 1:
+        for n in range(len(wavfiles)):
+            f = os.path.basename(wavfiles[n])[:-4]
+            utt_len = utt2LabelSeq[f].shape[0]
+            utt_bucket_n = int(math.ceil(utt_len / float(bucket_size)))
+
+            x = np.lib.pad(mfcc_feats[n],((0,utt_bucket_n*bucket_size-utt_len),\
+                    (0,0)),'constant',constant_values=0.)
+            y = np.lib.pad(utt2LabelSeq[f],((0,utt_bucket_n*bucket_size-utt_len),\
+                    (0,0)),'constant',constant_values=0.)
+            if phone_level:
+                y[utt_len:,label2id['<s>']] = 1.
+            else:
+                y[utt_len:,label2id['sil']] = 1.
+            ### convert x,y from 2d to 3d batch array
+            x = x.reshape(utt_bucket_n,bucket_size,39)
+            y = y.reshape(utt_bucket_n,bucket_size,len(id2label))
+            if X_train.size == 0: ### check empty
+                X_train = x
+                Y_train = y
+            else:
+                X_train = np.append(X_train,x,axis=0)
+                Y_train = np.append(Y_train,y,axis=0)
+            if X_train.shape[0] >= batch_size:
+                sample_weight = build_sample_weight(Y_train,label2id,phone_level=True)
+                X = X_train
+                Y = Y_train
+                X_train = np.array([])
+                Y_train = np.array([])
+                yield X, Y, sample_weight
+
+def Mygenerator2_mfcc(wavfiles,mfcc_feats,bucket_size,batch_size=128):
+    X_train = np.array([])
+    Sample_w = np.array([])
+    while 1:
+        for n in range(len(wavfiles)):
+            f = os.path.basename(wavfiles[n])[:-4]
+            utt_len = mfcc_feats[n].shape[0]
+            utt_bucket_n = int(math.ceil(utt_len / float(bucket_size)))
+
+            x = np.lib.pad(mfcc_feats[n],((0,utt_bucket_n*bucket_size-utt_len),\
+                    (0,0)),'constant',constant_values=0.)
+            sample_w = np.ones((utt_len))
+            sample_w = np.lib.pad(sample_w,\
+                    (0,utt_bucket_n*bucket_size - utt_len),\
+                    'constant',constant_values=1e-8)
+            ### convert x,y from 2d to 3d batch array
+            x = x.reshape(utt_bucket_n,bucket_size,39)
+            sample_w = sample_w.reshape(utt_bucket_n,bucket_size)
+            if X_train.size == 0: ### check empty
+                X_train = x
+                Sample_w = sample_w
+            else:
+                X_train = np.append(X_train,x,axis=0)
+                Sample_w = np.append(Sample_w,sample_w,axis=0)
+            if X_train.shape[0] >= batch_size:
+                X = X_train
+                W = Sample_w
+                X_train = np.array([])
+                Sample_w = np.array([])
+                yield X, X, W
+
 
 def Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,label2id,id2label,bucket_size,phone_level=True, batch_size=40):
     while 1:
@@ -393,12 +479,12 @@ def mnist_test():
     
 def ha():
     ### load mfcc input
-    target_prefix = '/data/home/troutman/lab/STD/Pattern/Result/'
+    target_prefix = '/tmp3/troutman/lab/STD/Pattern/Result/'
     dic_suffix = 'library/dictionary.txt'
     mlf_suffix =  'result/result.mlf'
-    wavpath  = '/data/home/troutman/lab/timit/train/wav/'
-    cfgpath  = '/data/home/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
-    word_align_path = '/data/home/troutman/lab/timit/train/word_all.txt'
+    wavpath  = '/tmp3/troutman/lab/timit/train/wav/'
+    cfgpath  = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    word_align_path = '/tmp3/troutman/lab/timit/train/word_all.txt'
     weight_dir = 'model_weights'
 
     ### check save weight file exist or not
@@ -443,48 +529,40 @@ def ha():
         start_time = time.time()
         epoch_loss = 0.
         ### for each target
-        for t,n_t in zip(targets,range(len(targets))):
-            print 'Target: {}'.format(t)
-            t_start_time = time.time()
+        for bs in range(len(buckets)):
+            print 'Bucket: {}'.format(buckets[bs])
+            b_start_time = time.time()
 
-            mlfpath = join(join(target_prefix,t), mlf_suffix)
-            dicpath = join(join(target_prefix,t), dic_suffix)
+            bucket_loss = 0.
+            for t,n_t in zip(targets,range(len(targets))):
+                print ' Target: {}'.format(t)
 
-            ### load y target
-            utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath, phone_level = phone_level)
+                mlfpath = join(join(target_prefix,t), mlf_suffix)
+                dicpath = join(join(target_prefix,t), dic_suffix)
 
-            target_loss = 0.
-
-            for bs in range(1,len(buckets)):
-                print 'bucket: {}'.format(buckets[bs])
+                ### load y target
+                utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath, phone_level = phone_level)
                 ### build model
                 model = MySeq2Seq(input_shape=(buckets[bs],39), output_dim=len(id2label),output_length=buckets[bs],hidden_dim=hid_dim)
                 model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
-                ### load weights
-                seq2seq_load_weights(model, encoder_weights, decoder_weights[n_t])
+                seq2seq_load_weights(model, encoder_weights, decoder_weights[n_t]) # load weights
             
                 ### shuffle data
                 wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
                 ### train on batch
                 batch_loss = 0.
-                #for i in range(nb_batch):
-                    #print '    batch: {:4d}'.format(i)
-                    #X_train, Y_train = build_batch_bucket(i,nb_batch,wavfiles,mfcc_feats,\
-                    #        utt2LabelSeq,label2id,id2label,phone_level=phone_level,bucket_size=bucket_size)
-                    ### build class weight(not train sil & sp)
-                    #sample_weight = build_sample_weight(Y_train,label2id,phone_level=phone_level)
-                    ### for loop to train each decoder
-                    #batch_loss += model.train_on_batch(X_train,Y_train,sample_weight=sample_weight)
-                history = model.fit_generator(Mygenerator(wavfiles,mfcc_feats,word_aligns,utt2LabelSeq,\
-                                            label2id,id2label,(buckets[bs-1],buckets[bs])),\
-                                            samples_per_epoch=buckets_sample[bs-1], nb_epoch=1)
-                target_loss += history.history['loss'][-1]*buckets_sample[bs-1]/sum(buckets_sample)
-            epoch_loss += target_loss
+                history = model.fit_generator(Mygenerator2(wavfiles,mfcc_feats,utt2LabelSeq,\
+                                            label2id,id2label,buckets[bs]),\
+                                            samples_per_epoch=40000, nb_epoch=1)
+                bucket_loss += history.history['loss'][-1]
+            bucket_loss /= len(targets)
+            epoch_loss += bucket_loss
             seq2seq_save_weights(model, encoder_weights, decoder_weights[n_t])
-            print ('  Epoch {:3d} target:[{}] loss: {:.5f}  fininish in: {:.5f} sec'.\
-                    format(epoch,t,target_loss,time.time() - t_start_time))
+            print ('  Epoch {:3d} bucket:[{}] loss: {:.5f}  fininish in: {:.5f} sec'.\
+                    format(epoch,buckets[bs],bucket_loss,time.time() - b_start_time))
 
-        print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec'.format(epoch,epoch_loss/len(targets),time.time() - start_time))
+        print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec !!!!!!'\
+                .format(epoch,epoch_loss/len(buckets),time.time() - start_time))
         model.save_weights(join(weight_dir,weight_name))
         #del utt2LabelSeq; del label2id;del id2label; del X_train; del Y_train;
 
@@ -492,11 +570,14 @@ def ha():
 
 def ha_mfcc():
     ### load mfcc input
-    wavpath  = '/data/home/troutman/lab/timit/train/wav/'
-    cfgpath  = '/data/home/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
-    word_align_path = '/data/home/troutman/lab/timit/train/word_all.txt'
+    wavpath  = '/tmp3/troutman/lab/timit/train/wav/'
+    cfgpath  = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    word_align_path = '/tmp3/troutman/lab/timit/train/word_all.txt'
     weight_dir = 'model_weights'
-    weight_name = 'ae_mfcc.h'
+    #buckets = [50]
+    #nb_epoch = 1
+    #weight_name = 'fixed50_mfcc.h'
+    weight_name = 'bucketv2_mfcc.h'
 
     ### check save weight file exist or not
     if not os.path.exists(weight_dir):
@@ -511,13 +592,15 @@ def ha_mfcc():
 
     ### load mfcc feats
     wavfiles,mfcc_feats = load_mfcc_train(wavfiles,cfgpath)
+    #mfcc_norm(mfcc_feats)
 
     ### load word_align
     word_aligns = {}
     load_word_align(word_align_path,word_aligns)
 
     ### build model
-    model = Seq2Seq(input_shape=(fix_len,39), output_dim=39,output_length=fix_len,hidden_dim=hid_dim)
+    model = Seq2Seq(input_shape=(fix_len,39), output_dim=39,output_length=fix_len,hidden_dim=hid_dim,peek=True)
+    #sgd = SGD(lr=0.01, decay=1e-6)
     model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
     model.summary()
     encoder_weights = []
@@ -531,26 +614,27 @@ def ha_mfcc():
         start_time = time.time()
         epoch_loss = 0.
         ### for each target
-        for bs in range(1,len(buckets)):
+        for bs in range(len(buckets)):
             print '  bucket: {}'.format(buckets[bs])
             bs_start_time  =time.time()
             ### shuffle data
             wavfiles, mfcc_feats = shuffle_mfcc_input(wavfiles,mfcc_feats)
 
-            model = MySeq2Seq(input_shape=(buckets[bs],39), output_dim=39,output_length=buckets[bs],hidden_dim=hid_dim)
+            model = Seq2Seq(input_shape=(buckets[bs],39), output_dim=39,output_length=buckets[bs],hidden_dim=hid_dim,peek=True)
             model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
             seq2seq_load_weights(model, encoder_weights, decoder_weights[0])
 
-            history = model.fit_generator(Mygenerator_mfcc(wavfiles,mfcc_feats,word_aligns,(buckets[bs-1],buckets[bs])),\
-                                        samples_per_epoch=buckets_sample[bs-1], nb_epoch=1)
+            history = model.fit_generator(Mygenerator2_mfcc(wavfiles,mfcc_feats,buckets[bs]),\
+                                        samples_per_epoch=40000, nb_epoch=1)
             seq2seq_save_weights(model, encoder_weights, decoder_weights[0])
 
             target_loss = history.history['loss'][-1]
-            epoch_loss += target_loss*buckets_sample[bs-1]/sum(buckets_sample)
+            epoch_loss += target_loss
             print ('  Epoch {:3d}  loss: {:.5f}  fininish in: {:.5f} sec'.\
                     format(epoch,target_loss,time.time() - bs_start_time))
 
-        print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec'.format(epoch,epoch_loss,time.time() - start_time))
+        #print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec!!!!!!!!!!'\
+        #        .format(epoch,epoch_loss/len(buckets),time.time() - start_time))
         model.save_weights(join(weight_dir,weight_name))
 
 
@@ -564,6 +648,12 @@ def test():
     word_align_path = '/data/home/troutman/lab/timit/test/word_all.txt'
     test_set = '/data/home/troutman/lab/timit/test/test_query.txt'
     weight_dir = 'model_weights'
+    dumpfile = 'test_word_align.p'
+
+    if os.path.isfile(dumpfile):
+        stdin = raw_input('overwrite existed file {} ?(y,n)'.format(dumpfile))
+        if 'n' in stdin:
+            sys.exit(1)
 
     mfcc_feats = [] # shape:(nb_wavfiles,nb_frame,39)
     wavfiles = [join(wavpath,f) for f in listdir(wavpath) if isfile(join(wavpath, f))]
@@ -618,20 +708,27 @@ def test():
             word.set_feat(pred)
             #print scipy.spatial.distance.cosine(pred[0],pred[1])
 
-    with open('test_word_align.p','w') as f:
+    with open(dumpfile,'w') as f:
         cPickle.dump(word_aligns, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
 
 def test_mfcc():
     ### load mfcc input
-    target_prefix = '/data/home/troutman/lab/STD/Pattern/Result/'
+    target_prefix = '/tmp3/troutman/lab/STD/Pattern/Result/'
     dic_suffix = 'library/dictionary.txt'
     mlf_suffix =  'result/result.mlf'
-    wavpath  = '/data/home/troutman/lab/timit/test/wav/'
-    cfgpath  = '/data/home/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
-    word_align_path = '/data/home/troutman/lab/timit/test/word_all.txt'
-    test_set = '/data/home/troutman/lab/timit/test/test_query.txt'
+    wavpath  = '/tmp3/troutman/lab/timit/test/wav/'
+    cfgpath  = '/tmp3/troutman/lab/STD/Pattern/zrst/matlab/hcopy.cfg'
+    word_align_path = '/tmp3/troutman/lab/timit/test/word_all.txt'
+    test_set = '/tmp3/troutman/lab/timit/test/test_query.txt'
     weight_dir = 'model_weights'
+    weight_name = 'ae_mfcc.h'
+    dumpfile = 'test_word_align_mfcc.p'
+
+    if os.path.isfile(dumpfile):
+        stdin = raw_input('overwrite existed file {} ?(y,n)'.format(dumpfile))
+        if 'n' in stdin:
+            sys.exit(1)
 
     mfcc_feats = [] # shape:(nb_wavfiles,nb_frame,39)
     wavfiles = [join(wavpath,f) for f in listdir(wavpath) if isfile(join(wavpath, f))]
@@ -646,16 +743,10 @@ def test_mfcc():
     encoder_weights = []
     decoder_weights = [] # store layer[-2], layer[-1] weights for each target decoder
     ### get init weights
-    t = targets[-1]
-    print (t)
-    mlfpath = join(join(target_prefix,t), mlf_suffix)
-    dicpath = join(join(target_prefix,t), dic_suffix)
-    utt2LabelSeq,label2id,id2label = util.MLFReader(mlfpath,cfgpath,dicpath,phone_level = phone_level)
-
     ### build model
-    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=len(id2label),output_length=fix_len,hidden_dim=hid_dim)
+    model = MySeq2Seq(input_shape=(fix_len,39), output_dim=39,output_length=fix_len,hidden_dim=hid_dim)
     #model.add(Activation('softmax'))
-    model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+    model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
     #model.compile(loss='mse', optimizer = 'rmsprop')
     model.load_weights(join(weight_dir,weight_name))
     model.summary()
@@ -668,16 +759,16 @@ def test_mfcc():
         wav = os.path.basename(wav)[:-4] # remove '.wav'
         for word in word_aligns[wav]:
             print ('   processing {}'.format(word.vol))
-            if word.length > 150:
-                b_size = 150
+            if word.length > 80:
+                b_size = 80
             else:
                 for length in buckets:
                     if length > word.length:
                         b_size = length
                         break
             ### build model
-            model = MySeq2Seq(input_shape=(b_size,39), output_dim=len(id2label),output_length=b_size,hidden_dim=hid_dim)
-            model.compile(loss='categorical_crossentropy', optimizer = 'adadelta',sample_weight_mode="temporal")
+            model = MySeq2Seq(input_shape=(b_size,39), output_dim=39,output_length=b_size,hidden_dim=hid_dim)
+            model.compile(loss='mse', optimizer = 'adadelta',sample_weight_mode="temporal")
             model.load_weights(join(weight_dir,weight_name))
             get_mid_layer_output = K.function([model.layers[0].input], [model.layers[-2].input])
 
@@ -686,7 +777,7 @@ def test_mfcc():
             word.set_feat(pred)
             #print scipy.spatial.distance.cosine(pred[0],pred[1])
 
-    with open('test_word_align.p','w') as f:
+    with open(dumpfile,'w') as f:
         cPickle.dump(word_aligns, f, protocol=cPickle.HIGHEST_PROTOCOL)
 
 
@@ -799,6 +890,34 @@ def seq2mseq_map():
     MAP = AP / n
     print "Our MAP:{}".format(MAP)
 
+def mfcc2mfcc_map():
+    with open('test_word_align_mfcc.p','r') as f:
+        words = cPickle.load(f)
+
+    ### load word_align
+    test_set = '/tmp3/troutman/lab/timit/test/test_query_P6.txt'
+    word_query = {}
+    load_word_align(test_set,word_query)
+
+    ### add feat
+    for wav in word_query:
+        for vol in word_query[wav]:
+            for v in words[wav]:
+                if v.start == vol.start:
+                    vol.set_feat(v.feat)
+    AP,n = 0., 0.
+    for wav in word_query:
+        for vol in word_query[wav]:
+            ap = average_precision(vol,word_query,atK=5)
+            if ap >= 0:
+                AP += ap
+                n += 1
+                print "current MAP:{}".format(AP/n)
+    
+    MAP = AP / n
+    print "Our MAP:{}".format(MAP)
+
+
 
 def dtw_map():
     with open('test_word_align_dtw.p','r') as f:
@@ -827,9 +946,11 @@ def dtw_map():
 
 
 if __name__ == "__main__":
-    #ha_mfcc()
+    ha_mfcc()
     #ha()
     #test()
+    #test_mfcc()
     #seq2mseq_map()
+    #mfcc2mfcc_map()
     #test_dtw()
-    dtw_map()
+    #dtw_map()
