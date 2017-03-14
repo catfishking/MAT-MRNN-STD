@@ -28,7 +28,7 @@ from dtw import dtw
 
 import util
 
-nb_epoch = 800
+nb_epoch = 1000
 batch_size = 40
 fix_len = 50
 bucket_size = 50
@@ -43,7 +43,7 @@ targets = ['timit_c50_s5_g1_phone','timit_c50_s3_g1_phone','timit_c50_s7_g1_phon
 buckets = [20,30,40,60,80,40]
 #buckets_sample = [5166,8620,8049,7878,7378,2255]
 #buckets_sample = [4000,8040,7880,7360,2240]
-weight_name = 'bucketv2.h'
+weight_name = 'bucketv2fuck.h'
 
 class WordAlign():
     def __init__(self,wavname,start,end,vol):
@@ -630,11 +630,11 @@ def ha_mfcc():
 
             target_loss = history.history['loss'][-1]
             epoch_loss += target_loss
-            print ('  Epoch {:3d}  loss: {:.5f}  fininish in: {:.5f} sec'.\
-                    format(epoch,target_loss,time.time() - bs_start_time))
+            #print ('  Epoch {:3d}  loss: {:.5f}  fininish in: {:.5f} sec'.\
+            #        format(epoch,target_loss,time.time() - bs_start_time))
 
-        #print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec!!!!!!!!!!'\
-        #        .format(epoch,epoch_loss/len(buckets),time.time() - start_time))
+        print ('Epoch {:3d} loss: {:.5f} fininish in: {:.5f} sec!!!!!!!!!!'\
+                .format(epoch,epoch_loss/len(buckets),time.time() - start_time))
         model.save_weights(join(weight_dir,weight_name))
 
 
@@ -946,8 +946,8 @@ def dtw_map():
 
 
 if __name__ == "__main__":
-    ha_mfcc()
-    #ha()
+    #ha_mfcc()
+    ha()
     #test()
     #test_mfcc()
     #seq2mseq_map()
